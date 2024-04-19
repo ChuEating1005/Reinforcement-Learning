@@ -1,5 +1,6 @@
 # Spring 2024, 535514 Reinforcement Learning
 # HW2: REINFORCE and baseline
+# pip install gym==0.25.2
 
 import os
 import gym
@@ -20,7 +21,10 @@ SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
 
 # Define a tensorboard writer
 writer = SummaryWriter("./tb_record_1")
-        
+    
+device = torch.device("cpu")
+#device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class Policy(nn.Module):
     """
         Implement both policy network and the value network in one model
@@ -43,7 +47,6 @@ class Policy(nn.Module):
         
         ########## YOUR CODE HERE (5~10 lines) ##########
         self.affine1 = nn.Linear(self.observation_dim, 128)  # First fully connected layer
-        self.dropout = nn.Dropout(p=0.6)  # Dropout to prevent overfitting
         # Actor's layer
         self.actor = nn.Sequential(
             nn.Linear(128, self.action_dim),
@@ -68,10 +71,9 @@ class Policy(nn.Module):
         """
         
         ########## YOUR CODE HERE (3~5 lines) ##########
-        x = F.relu(self.affine1(state))
-        # x = self.dropout(x)
-        action_prob = F.softmax(self.actor(x), dim=-1)
-        state_value = self.critic(x)
+        state = F.relu(self.affine1(state))
+        action_prob = self.actor(state)
+        state_value = self.critic(state)
 
         ########## END OF YOUR CODE ##########
 
@@ -88,7 +90,7 @@ class Policy(nn.Module):
         """
         
         ########## YOUR CODE HERE (3~5 lines) ##########
-        state = torch.from_numpy(state).float()
+        state = torch.from_numpy(state).float().to(device)
         probs, state_value = self.forward(state)
         m = Categorical(probs)
         action = m.sample()
@@ -117,19 +119,27 @@ class Policy(nn.Module):
         returns = []
 
         ########## YOUR CODE HERE (8-15 lines) ##########
-        for r in self.rewards[::-1]:
+        for r in reversed(self.rewards):
             R = r + gamma * R
             returns.insert(0, R)
-        returns = torch.tensor(returns)
+
+        returns = torch.tensor(returns, device=device)
         returns = (returns - returns.mean()) / (returns.std() + np.finfo(np.float32).eps.item())
+
+        t = 0
         for (log_prob, value), R in zip(saved_actions, returns):
-            policy_losses.append(-gamma * R * log_prob)
-            value_losses.append(F.smooth_l1_loss(value, torch.tensor([R])))
-        policy_losses = torch.tensor(policy_losses, dtype=torch.float32, requires_grad=True)
-        value_losses = torch.tensor(value_losses, dtype=torch.float32, requires_grad=True)
-        loss = torch.stack(policy_losses).sum() + torch.stack(value_losses).sum()
-        ########## END OF YOUR CODE ##########
+            # calculate actor (policy) loss
+            policy_losses.append(-log_prob * R * gamma**t)
+            t += 1
+
+            # calculate critic (value) loss using L1 smooth loss
+            value_losses.append(F.smooth_l1_loss(value, torch.tensor([R], device=device)))
         
+        # policy_losses = torch.tensor(policy_losses, dtype=torch.float32, requires_grad=True, device=device)
+        # value_losses = torch.tensor(value_losses, dtype=torch.float32, requires_grad=True, device=device)
+        # loss = policy_losses.sum() + value_losses.sum()
+        loss = torch.stack(policy_losses).sum() + torch.stack(value_losses).sum()
+
         return loss
 
     def clear_memory(self):
@@ -149,12 +159,11 @@ def train(lr=0.01):
     """
     
     # Instantiate the policy model and the optimizer
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = Policy().to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     # Learning rate scheduler (optional)
-    scheduler = Scheduler.StepLR(optimizer, step_size=100, gamma=0.9)
+    # scheduler = Scheduler.StepLR(optimizer, step_size=100, gamma=0.9)
     
     # EWMA reward for tracking the learning progress
     ewma_reward = 0
@@ -167,21 +176,27 @@ def train(lr=0.01):
         t = 0
 
         # Uncomment the following line to use learning rate scheduler
-        scheduler.step()
+        # scheduler.step()
         
         # For each episode, only run 9999 steps to avoid entering infinite loop during the learning process
         ########## YOUR CODE HERE (10-15 lines) ##########
         for t in range(10000):
             action = model.select_action(state)
-            state, reward, done, _, _ = env.step(action)
+            next_state, reward, done, _ = env.step(action)
+
+            state = next_state
             model.rewards.append(reward)
             ep_reward += reward
             if done:
                 break
-            loss = model.calculate_loss
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+
+        loss = model.calculate_loss()
+                    
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        model.clear_memory()
         ########## END OF YOUR CODE ##########
             
         # update EWMA reward and log the results
@@ -192,7 +207,7 @@ def train(lr=0.01):
         ########## YOUR CODE HERE (4-5 lines) ##########
         writer.add_scalar('Reward / Episode', ep_reward, i_episode)
         writer.add_scalar('Reward / EWMA', ewma_reward, i_episode)
-        writer.add_scalar('Loss', loss, i_episode)
+        #writer.add_scalar('Loss', loss, i_episode)
         ########## END OF YOUR CODE ##########
 
         # check if we have "solved" the cart pole problem, use 120 as the threshold in LunarLander-v2
@@ -237,6 +252,7 @@ if __name__ == '__main__':
     lr = 0.01
     env = gym.make('CartPole-v0')
     env.seed(random_seed)  
+    print(f"Reward goal: {env.spec.reward_threshold}")
     torch.manual_seed(random_seed)  
     train(lr)
     test(f'CartPole_{lr}.pth')
