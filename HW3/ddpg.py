@@ -1,6 +1,7 @@
 # Spring 2024, 535514 Reinforcement Learning
 # HW3: DDPG
-
+# pip install numpy==1.24
+# pip install gym=0.25.2
 import sys
 import warnings
 import gym

@@ -1,6 +1,6 @@
 # Spring 2024, 535514 Reinforcement Learning
 # HW2: REINFORCE and baseline
-# pip install gym==0.25.2
+# gym version = 0.25.2
 
 import os
 import gym
@@ -203,11 +203,11 @@ def train(lr=0.01):
         ewma_reward = 0.05 * ep_reward + (1 - 0.05) * ewma_reward
         print('Episode {}\tlength: {}\treward: {}\t ewma reward: {}'.format(i_episode, t, ep_reward, ewma_reward))
 
-        #Try to use Tensorboard to record the behavior of your implementation 
+        # Try to use Tensorboard to record the behavior of your implementation 
         ########## YOUR CODE HERE (4-5 lines) ##########
         writer.add_scalar('Reward / Episode', ep_reward, i_episode)
         writer.add_scalar('Reward / EWMA', ewma_reward, i_episode)
-        #writer.add_scalar('Loss', loss, i_episode)
+        writer.add_scalar('Loss', loss, i_episode)
         ########## END OF YOUR CODE ##########
 
         # check if we have "solved" the cart pole problem, use 120 as the threshold in LunarLander-v2
