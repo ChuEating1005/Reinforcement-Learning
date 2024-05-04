@@ -2,6 +2,7 @@
 # HW3: DDPG
 
 import sys
+import warnings
 import gym
 import numpy as np
 import os
@@ -14,6 +15,7 @@ from torch.optim import Adam
 from torch.autograd import Variable
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
+
 
 # Define a tensorboard writer
 writer = SummaryWriter("./tb_record_3")
@@ -76,18 +78,18 @@ class Actor(nn.Module):
 
         ########## YOUR CODE HERE (5~10 lines) ##########
         # Construct your own actor network
-
-
-        
+        self.fc1 = nn.Linear(num_inputs, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.output = nn.Linear(hidden_size, num_outputs)
         ########## END OF YOUR CODE ##########
         
     def forward(self, inputs):
         
         ########## YOUR CODE HERE (5~10 lines) ##########
         # Define the forward pass your actor network
-        
-        
-        
+        x = F.relu(self.fc1(inputs))
+        x = F.relu(self.fc2(x))
+        return torch.tanh(self.output(x))
         ########## END OF YOUR CODE ##########
 
 class Critic(nn.Module):
@@ -98,19 +100,19 @@ class Critic(nn.Module):
 
         ########## YOUR CODE HERE (5~10 lines) ##########
         # Construct your own critic network
-
-
-
-
+        self.fc1 = nn.Linear(num_inputs, hidden_size)
+        self.fc2 = nn.Linear(hidden_size + num_outputs, hidden_size)    
+        self.output = nn.Linear(hidden_size, 1)
         ########## END OF YOUR CODE ##########
 
     def forward(self, inputs, actions):
         
         ########## YOUR CODE HERE (5~10 lines) ##########
         # Define the forward pass your critic network
-        
-        
-        
+        state = F.relu(self.fc1(inputs))
+        x = torch.cat([state, actions], 1)
+        x = F.relu(self.fc2(x))
+        return self.output(x)        
         ########## END OF YOUR CODE ##########        
         
 
@@ -144,27 +146,37 @@ class DDPG(object):
         ########## YOUR CODE HERE (3~5 lines) ##########
         # Add noise to your action for exploration
         # Clipping might be needed 
-
-
-
-
+        if action_noise is not None:
+            mu += torch.Tensor(action_noise.noise())
+        mu = torch.clamp(mu, -1.0, 1.0)
+        return mu
         ########## END OF YOUR CODE ##########
 
 
     def update_parameters(self, batch):
-        state_batch = Variable(torch.cat(batch.state))
-        action_batch = Variable(torch.cat(batch.action))
-        reward_batch = Variable(torch.cat(batch.reward))
-        mask_batch = Variable(torch.cat(batch.mask))
-        next_state_batch = Variable(torch.cat(batch.next_state))
+        state_batch = Variable(torch.cat([b.state for b in batch]))
+        action_batch = Variable(torch.cat([b.action for b in batch]))
+        reward_batch = Variable(torch.cat([b.reward for b in batch]))
+        mask_batch = Variable(torch.cat([b.mask for b in batch]))
+        next_state_batch = Variable(torch.cat([b.next_state for b in batch]))
         
         ########## YOUR CODE HERE (10~20 lines) ##########
         # Calculate policy loss and value loss
         # Update the actor and the critic
-
-
-
-
+        next_action = self.actor_target(next_state_batch)
+        target_value = self.critic_target(next_state_batch, next_action)
+        expected_value = reward_batch + self.gamma * target_value * mask_batch
+        current_value = self.critic(state_batch, action_batch)
+        value_loss = F.mse_loss(current_value, expected_value.detach()) # Detach the expected value
+        policy_loss = -self.critic(state_batch, self.actor(state_batch)).mean() # Minimize the negative value
+        # Update the actor network
+        self.actor_optim.zero_grad()
+        policy_loss.backward()
+        self.actor_optim.step()
+        # Update the critic network
+        self.critic_optim.zero_grad()
+        value_loss.backward()
+        self.critic_optim.step()
         ########## END OF YOUR CODE ########## 
 
         soft_update(self.actor_target, self.actor, self.tau)
@@ -194,7 +206,7 @@ class DDPG(object):
         if critic_path is not None: 
             self.critic.load_state_dict(torch.load(critic_path))
 
-def train():    
+def train(env_name):    
     num_episodes = 200
     gamma = 0.995
     tau = 0.002
@@ -223,19 +235,34 @@ def train():
         state = torch.Tensor([env.reset()])
 
         episode_reward = 0
+        value_loss = []
+        policy_loss = []
         while True:
             
             ########## YOUR CODE HERE (15~25 lines) ##########
             # 1. Interact with the env to get new (s,a,r,s') samples 
             # 2. Push the sample to the replay buffer
             # 3. Update the actor and the critic
-
-
-
+            total_numsteps+=1
+            action = agent.select_action(state, ounoise)
+            next_state, reward, done, _ = env.step(action.numpy()[0])
+            next_state = torch.Tensor([next_state])
+            memory.push(state, action, torch.Tensor([done]), next_state, torch.Tensor([reward]))
+            if len(memory) >= batch_size and total_numsteps%updates_per_step == 0:
+                batch = memory.sample(batch_size)
+                vloss, ploss = agent.update_parameters(batch)
+                value_loss.append(vloss)
+                policy_loss.append(ploss)
+            episode_reward += reward
+            state = next_state
+            if done:
+                break
             ########## END OF YOUR CODE ########## 
             
 
         rewards.append(episode_reward)
+        actor_loss = np.mean(policy_loss)
+        critic_loss = np.mean(value_loss)
         t = 0
         if i_episode % print_freq == 0:
             state = torch.Tensor([env.reset()])
@@ -262,16 +289,21 @@ def train():
             ewma_reward = 0.05 * episode_reward + (1 - 0.05) * ewma_reward
             ewma_reward_history.append(ewma_reward)           
             print("Episode: {}, length: {}, reward: {:.2f}, ewma reward: {:.2f}".format(i_episode, t, rewards[-1], ewma_reward))
+
+            #Logging
+            writer.add_scalar('Reward', episode_reward, i_episode)
+            writer.add_scalar('EWMA Reward', ewma_reward, i_episode)
+            writer.add_scalar('Critic loss', critic_loss, i_episode)
+            writer.add_scalar('Actor loss', actor_loss, i_episode)
     
     agent.save_model(env_name, '.pth')        
  
 
 if __name__ == '__main__':
     # For reproducibility, fix the random seed
-    random_seed = 10  
-    env = gym.make('Pendulum-v0')
-    env.seed(random_seed)  
-    torch.manual_seed(random_seed)  
-    train()
+    random_seed = 10
+    env = gym.make('Pendulum-v1')
+    env.seed(random_seed)
+    train('Pendulum-v1')
 
 
