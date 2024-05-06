@@ -1,9 +1,7 @@
-# Spring 2024, 535514 Reinforcement Learning
-# HW3: DDPG
-# pip install numpy==1.24
-# pip install gym=0.25.2
+# Spring 2023, 535515 Reinforcement Learning
+# HW2: DDPG
+
 import sys
-import warnings
 import gym
 import numpy as np
 import os
@@ -17,10 +15,9 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
 # Define a tensorboard writer
-writer = SummaryWriter("./tb_record_3")
+writer = SummaryWriter("./tb_record_1")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def soft_update(target, source, tau):
     for target_param, param in zip(target.parameters(), source.parameters()):
@@ -80,7 +77,9 @@ class Actor(nn.Module):
 
         ########## YOUR CODE HERE (5~10 lines) ##########
         # Construct your own actor network
-        self.fc1 = nn.Sequential(
+
+        # Actor network
+        self.actor_layer = nn.Sequential(
             nn.Linear(num_inputs, 400, device=device),
             nn.ReLU(),
             nn.Linear(400, 300, device=device),
@@ -88,24 +87,31 @@ class Actor(nn.Module):
             nn.Linear(300, num_outputs, device=device),
             nn.Tanh()
         )
-        # self.fc2 = nn.Sequential(
-        #     nn.Linear(400, 300, device=device),
-        #     nn.ReLU()
-        # )
-        # self.fc3 = nn.Sequential(
-        #     nn.Linear(300, num_outputs, device=device),
-        #     nn.Tanh()
-        # )
+
+        '''
+        Actor network structure
+        Layer (type)               Output Shape         Param #
+        =========================================================
+        Linear-1                   [-1, 400]            32,000
+        ReLU-2                     [-1, 400]            0
+        Linear-3                   [-1, 300]            120,300
+        ReLU-4                     [-1, 300]            0
+        Linear-5                   [-1, 1]              301
+        Tanh-6                     [-1, 1]              0
+        =========================================================
+        '''
+        
         ########## END OF YOUR CODE ##########
         
     def forward(self, inputs):
         
         ########## YOUR CODE HERE (5~10 lines) ##########
         # Define the forward pass your actor network
-        x = self.fc1(inputs)
-        # x = self.fc2(x)
-        # x = self.fc3(x)
-        return x
+
+        out = self.actor_layer(inputs)
+        
+        return out
+        
         ########## END OF YOUR CODE ##########
 
 class Critic(nn.Module):
@@ -116,28 +122,45 @@ class Critic(nn.Module):
 
         ########## YOUR CODE HERE (5~10 lines) ##########
         # Construct your own critic network
-        self.fc1 = nn.Sequential(
+
+        # Shared layer: state
+        self.state_layer = nn.Sequential(
             nn.Linear(num_inputs, 400, device=device),
-            nn.ReLU()
-        )   
-        self.fc2 = nn.Sequential(
-            nn.Linear(400 + num_outputs, 300, device=device),
             nn.ReLU(),
-            nn.Linear(300, 1, device=device)
         )
-        #self.fc3 = nn.Linear(300, 1, device=device)
+
+        # Shared layer: state and action
+        self.shared_layer = nn.Sequential(
+            nn.Linear(num_outputs + 400, 300, device=device),
+            nn.ReLU(),
+            nn.Linear(300, 1, device=device),
+        )
+
+        '''
+        Critic network structure
+        Layer (type)               Output Shape         Param #
+        =========================================================
+        Linear-1                   [-1, 400]            32,000
+        ReLU-2                     [-1, 400]            0
+        Linear-3                   [-1, 300]            120,300
+        ReLU-4                     [-1, 300]            0
+        Linear-5                   [-1, 1]              301
+        =========================================================
+        '''
+
         ########## END OF YOUR CODE ##########
 
     def forward(self, inputs, actions):
         
         ########## YOUR CODE HERE (5~10 lines) ##########
         # Define the forward pass your critic network
-        x = self.fc1(inputs)
-        x = self.fc2(torch.cat([x, actions], 1))
-        #x = self.fc3(x)
-        return x
-        ########## END OF YOUR CODE ##########        
         
+        out = self.state_layer(inputs)
+        out = self.shared_layer(torch.cat([out, actions], dim=1))
+        
+        return out
+        
+        ########## END OF YOUR CODE ##########        
 
 class DDPG(object):
     def __init__(self, num_inputs, action_space, gamma=0.995, tau=0.0005, hidden_size=128, lr_a=1e-4, lr_c=1e-3):
@@ -169,6 +192,7 @@ class DDPG(object):
         ########## YOUR CODE HERE (3~5 lines) ##########
         # Add noise to your action for exploration
         # Clipping might be needed 
+
         self.actor.train()
 
         # add noise to action
@@ -177,6 +201,7 @@ class DDPG(object):
 
         # clip action, set action between -1 and 1
         return torch.clamp(mu, -1, 1).cpu()
+
         ########## END OF YOUR CODE ##########
 
 
@@ -186,10 +211,12 @@ class DDPG(object):
         reward_batch = Variable(batch.reward)
         mask_batch = Variable(batch.mask)
         next_state_batch = Variable(batch.next_state)
-        
+
         ########## YOUR CODE HERE (10~20 lines) ##########
         # Calculate policy loss and value loss
         # Update the actor and the critic
+
+        # predict next action and Q-value in next state
         next_action_batch = self.actor_target(next_state_batch)
         next_state_action_values = self.critic_target(next_state_batch, next_action_batch)
 
@@ -215,6 +242,7 @@ class DDPG(object):
         self.actor_optim.zero_grad()
         policy_loss.backward()
         self.actor_optim.step()
+
         ########## END OF YOUR CODE ########## 
 
         soft_update(self.actor_target, self.actor, self.tau)
@@ -245,7 +273,7 @@ class DDPG(object):
             self.critic.load_state_dict(torch.load(critic_path))
 
 def train():    
-    num_episodes = 300
+    num_episodes = 200
     gamma = 0.995
     tau = 0.002
     hidden_size = 128
@@ -350,17 +378,16 @@ def train():
             writer.add_scalar('Loss/value', value_loss, i_episode)
             writer.add_scalar('Loss/policy', policy_loss, i_episode)
     
-    env_name = 'Pendulum-v1'
-    agent.save_model(env_name, suffix="DDPG")      
+    agent.save_model(env_name='Pendulum-v1', suffix="DDPG")
  
 def test():
     num_episodes = 10
     render = True
     env = gym.make('Pendulum-v1')
     agent = DDPG(env.observation_space.shape[0], env.action_space)
-    agent.load_model(actor_path='./preTrained/ddpg_actor_Pendulum-v1_05062024_042732_DDPG',
-                        critic_path='./preTrained/ddpg_critic_Pendulum-v1_05062024_042732_DDPG')
-    for i_episode in range(1, num_episodes+1):
+    agent.load_model(actor_path='./preTrained/ddpg_actor_Pendulum-v1_05022023_155126_.pth',
+                        critic_path='./preTrained/ddpg_critic_Pendulum-v1_05022023_155126_.pth')
+    for i_episode in range(num_episodes):
         state = torch.Tensor([env.reset()])
         episode_reward = 0
         while True:
@@ -375,11 +402,11 @@ def test():
                 break
         print("Episode: {}, reward: {:.2f}".format(i_episode, episode_reward))
 
-
 if __name__ == '__main__':
     # For reproducibility, fix the random seed
-    random_seed = 10
+    random_seed = 10  
     env = gym.make('Pendulum-v1')
-    env.seed(random_seed)
-    #train()
+    env.seed(random_seed)  
+    torch.manual_seed(random_seed)  
+    train()
     test()
