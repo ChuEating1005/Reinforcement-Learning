@@ -20,7 +20,7 @@ from torch.utils.tensorboard import SummaryWriter
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Define a tensorboard writer
-writer = SummaryWriter("./tb_record_3")
+writer = SummaryWriter("./tb_record_Pendulum300")
 
 def soft_update(target, source, tau):
     for target_param, param in zip(target.parameters(), source.parameters()):
@@ -169,14 +169,12 @@ class DDPG(object):
         ########## YOUR CODE HERE (3~5 lines) ##########
         # Add noise to your action for exploration
         # Clipping might be needed 
-        self.actor.train()
-
         # add noise to action
         if action_noise is not None:
             mu += torch.tensor(action_noise).to(device)
 
         # clip action, set action between -1 and 1
-        return torch.clamp(mu, -1, 1).cpu()
+        return torch.clamp(mu, -2, 2).cpu()
         ########## END OF YOUR CODE ##########
 
 
@@ -194,7 +192,8 @@ class DDPG(object):
         next_state_action_values = self.critic_target(next_state_batch, next_action_batch)
 
         # compute TD target, set Q_target to 0 if next state is terminal
-        Q_targets = reward_batch + (self.gamma * next_state_action_values * (1 - mask_batch))
+        with torch.no_grad():    
+            Q_targets = reward_batch + (self.gamma * next_state_action_values * (1 - mask_batch))
 
         # predict Q-value in current state
         state_action_batch = self.critic(state_batch, action_batch)
@@ -245,13 +244,13 @@ class DDPG(object):
             self.critic.load_state_dict(torch.load(critic_path))
 
 def train():    
-    num_episodes = 300
+    num_episodes = 1000
     gamma = 0.995
     tau = 0.002
     hidden_size = 128
     noise_scale = 0.3
     replay_size = 100000
-    batch_size = 128
+    batch_size = 256
     updates_per_step = 1
     print_freq = 1
     ewma_reward = 0
@@ -283,7 +282,7 @@ def train():
 
             # select action and interact with the environment
             # add noise to action for exploration
-            action = agent.select_action(state, ounoise.noise() * noise_scale)
+            action = agent.select_action(state, ounoise.noise())
             next_state, reward, done, _ = env.step(action.numpy())
             
             # add sample to replay buffer
@@ -346,7 +345,7 @@ def train():
 
             # write results to tensorboard
             writer.add_scalar('Reward/ewma', ewma_reward, i_episode)
-            writer.add_scalar('Reward/ep_reward', ewma_reward, i_episode)
+            writer.add_scalar('Reward/ep_reward', rewards[-1], i_episode)
             writer.add_scalar('Loss/value', value_loss, i_episode)
             writer.add_scalar('Loss/policy', policy_loss, i_episode)
     
@@ -358,16 +357,16 @@ def test():
     render = True
     env = gym.make('Pendulum-v1')
     agent = DDPG(env.observation_space.shape[0], env.action_space)
-    agent.load_model(actor_path='./preTrained/ddpg_actor_Pendulum-v1_05062024_042732_DDPG',
-                        critic_path='./preTrained/ddpg_critic_Pendulum-v1_05062024_042732_DDPG')
+    agent.load_model(actor_path='./preTrained/ddpg_actor_Pendulum-v1_05082024_030212_DDPG',
+                        critic_path='./preTrained/ddpg_critic_Pendulum-v1_05082024_030212_DDPG')
     for i_episode in range(1, num_episodes+1):
         state = torch.Tensor([env.reset()])
         episode_reward = 0
         while True:
             action = agent.select_action(state)
             next_state, reward, done, _ = env.step(action.numpy()[0])
-            if render:
-                env.render()
+            # if render:
+            #     env.render()
             episode_reward += reward
             next_state = torch.Tensor([next_state])
             state = next_state

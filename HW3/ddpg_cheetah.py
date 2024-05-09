@@ -1,7 +1,8 @@
-# Spring 2023, 535515 Reinforcement Learning
-# HW2: DDPG
-
+# Spring 2024, 535514 Reinforcement Learning
+# HW3: DDPG
 import sys
+import warnings
+#import d4rl
 import gym
 import numpy as np
 import os
@@ -15,9 +16,11 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# device = "cpu"
+
 # Define a tensorboard writer
-writer = SummaryWriter("./tb_record_1")
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+writer = SummaryWriter("./tb_record_cheetah500")
 
 def soft_update(target, source, tau):
     for target_param, param in zip(target.parameters(), source.parameters()):
@@ -77,9 +80,7 @@ class Actor(nn.Module):
 
         ########## YOUR CODE HERE (5~10 lines) ##########
         # Construct your own actor network
-
-        # Actor network
-        self.actor_layer = nn.Sequential(
+        self.fc1 = nn.Sequential(
             nn.Linear(num_inputs, 400, device=device),
             nn.ReLU(),
             nn.Linear(400, 300, device=device),
@@ -87,31 +88,24 @@ class Actor(nn.Module):
             nn.Linear(300, num_outputs, device=device),
             nn.Tanh()
         )
-
-        '''
-        Actor network structure
-        Layer (type)               Output Shape         Param #
-        =========================================================
-        Linear-1                   [-1, 400]            32,000
-        ReLU-2                     [-1, 400]            0
-        Linear-3                   [-1, 300]            120,300
-        ReLU-4                     [-1, 300]            0
-        Linear-5                   [-1, 1]              301
-        Tanh-6                     [-1, 1]              0
-        =========================================================
-        '''
-        
+        # self.fc2 = nn.Sequential(
+        #     nn.Linear(400, 300, device=device),
+        #     nn.ReLU()
+        # )
+        # self.fc3 = nn.Sequential(
+        #     nn.Linear(300, num_outputs, device=device),
+        #     nn.Tanh()
+        # )
         ########## END OF YOUR CODE ##########
         
     def forward(self, inputs):
         
         ########## YOUR CODE HERE (5~10 lines) ##########
         # Define the forward pass your actor network
-
-        out = self.actor_layer(inputs)
-        
-        return out
-        
+        x = self.fc1(inputs)
+        # x = self.fc2(x)
+        # x = self.fc3(x)
+        return x
         ########## END OF YOUR CODE ##########
 
 class Critic(nn.Module):
@@ -122,59 +116,42 @@ class Critic(nn.Module):
 
         ########## YOUR CODE HERE (5~10 lines) ##########
         # Construct your own critic network
-
-        # Shared layer: state
-        self.state_layer = nn.Sequential(
+        self.fc1 = nn.Sequential(
             nn.Linear(num_inputs, 400, device=device),
+            nn.ReLU()
+        )   
+        self.fc2 = nn.Sequential(
+            nn.Linear(400 + num_outputs, 300, device=device),
             nn.ReLU(),
+            nn.Linear(300, 1, device=device)
         )
-
-        # Shared layer: state and action
-        self.shared_layer = nn.Sequential(
-            nn.Linear(num_outputs + 400, 300, device=device),
-            nn.ReLU(),
-            nn.Linear(300, 1, device=device),
-        )
-
-        '''
-        Critic network structure
-        Layer (type)               Output Shape         Param #
-        =========================================================
-        Linear-1                   [-1, 400]            32,000
-        ReLU-2                     [-1, 400]            0
-        Linear-3                   [-1, 300]            120,300
-        ReLU-4                     [-1, 300]            0
-        Linear-5                   [-1, 1]              301
-        =========================================================
-        '''
-
+        #self.fc3 = nn.Linear(300, 1, device=device)
         ########## END OF YOUR CODE ##########
 
     def forward(self, inputs, actions):
         
         ########## YOUR CODE HERE (5~10 lines) ##########
         # Define the forward pass your critic network
-        
-        out = self.state_layer(inputs)
-        out = self.shared_layer(torch.cat([out, actions], dim=1))
-        
-        return out
-        
+        x = self.fc1(inputs)
+        x = self.fc2(torch.cat([x, actions], 1))
+        #x = self.fc3(x)
+        return x
         ########## END OF YOUR CODE ##########        
+        
 
 class DDPG(object):
-    def __init__(self, num_inputs, action_space, gamma=0.995, tau=0.0005, hidden_size=128, lr_a=1e-4, lr_c=1e-3):
+    def __init__(self, num_inputs, action_space, gamma=0.995, tau=0.0005, hidden_size=128, lr_a=1e-4, lr_c=2e-4):
 
         self.num_inputs = num_inputs
         self.action_space = action_space
 
-        self.actor = Actor(hidden_size, self.num_inputs, self.action_space)
-        self.actor_target = Actor(hidden_size, self.num_inputs, self.action_space)
-        self.actor_perturbed = Actor(hidden_size, self.num_inputs, self.action_space)
+        self.actor = Actor(hidden_size, self.num_inputs, self.action_space).to(device)
+        self.actor_target = Actor(hidden_size, self.num_inputs, self.action_space).to(device)
+        self.actor_perturbed = Actor(hidden_size, self.num_inputs, self.action_space).to(device)
         self.actor_optim = Adam(self.actor.parameters(), lr=lr_a)
 
-        self.critic = Critic(hidden_size, self.num_inputs, self.action_space)
-        self.critic_target = Critic(hidden_size, self.num_inputs, self.action_space)
+        self.critic = Critic(hidden_size, self.num_inputs, self.action_space).to(device)
+        self.critic_target = Critic(hidden_size, self.num_inputs, self.action_space).to(device)
         self.critic_optim = Adam(self.critic.parameters(), lr=lr_c)
 
         self.gamma = gamma
@@ -192,7 +169,6 @@ class DDPG(object):
         ########## YOUR CODE HERE (3~5 lines) ##########
         # Add noise to your action for exploration
         # Clipping might be needed 
-
         self.actor.train()
 
         # add noise to action
@@ -201,7 +177,6 @@ class DDPG(object):
 
         # clip action, set action between -1 and 1
         return torch.clamp(mu, -1, 1).cpu()
-
         ########## END OF YOUR CODE ##########
 
 
@@ -211,17 +186,16 @@ class DDPG(object):
         reward_batch = Variable(batch.reward)
         mask_batch = Variable(batch.mask)
         next_state_batch = Variable(batch.next_state)
-
+        
         ########## YOUR CODE HERE (10~20 lines) ##########
         # Calculate policy loss and value loss
         # Update the actor and the critic
-
-        # predict next action and Q-value in next state
         next_action_batch = self.actor_target(next_state_batch)
         next_state_action_values = self.critic_target(next_state_batch, next_action_batch)
 
         # compute TD target, set Q_target to 0 if next state is terminal
-        Q_targets = reward_batch + (self.gamma * next_state_action_values * (1 - mask_batch))
+        with torch.no_grad():
+            Q_targets = reward_batch + (self.gamma * next_state_action_values * (1 - mask_batch))
 
         # predict Q-value in current state
         state_action_batch = self.critic(state_batch, action_batch)
@@ -242,7 +216,6 @@ class DDPG(object):
         self.actor_optim.zero_grad()
         policy_loss.backward()
         self.actor_optim.step()
-
         ########## END OF YOUR CODE ########## 
 
         soft_update(self.actor_target, self.actor, self.tau)
@@ -273,13 +246,13 @@ class DDPG(object):
             self.critic.load_state_dict(torch.load(critic_path))
 
 def train():    
-    num_episodes = 200
+    num_episodes = 1000
     gamma = 0.995
     tau = 0.002
     hidden_size = 128
-    noise_scale = 0.3
+    noise_scale = 0.1
     replay_size = 100000
-    batch_size = 128
+    batch_size = 256
     updates_per_step = 1
     print_freq = 1
     ewma_reward = 0
@@ -303,7 +276,7 @@ def train():
         episode_reward = 0
         value_loss, policy_loss = 0, 0
         while True:
-            
+            total_numsteps += 1
             ########## YOUR CODE HERE (15~25 lines) ##########
             # 1. Interact with the env to get new (s,a,r,s') samples 
             # 2. Push the sample to the replay buffer
@@ -311,7 +284,7 @@ def train():
 
             # select action and interact with the environment
             # add noise to action for exploration
-            action = agent.select_action(state, ounoise.noise() * noise_scale)
+            action = agent.select_action(state, ounoise.noise())
             next_state, reward, done, _ = env.step(action.numpy())
             
             # add sample to replay buffer
@@ -374,20 +347,22 @@ def train():
 
             # write results to tensorboard
             writer.add_scalar('Reward/ewma', ewma_reward, i_episode)
-            writer.add_scalar('Reward/ep_reward', ewma_reward, i_episode)
+            writer.add_scalar('Reward/ep_reward', rewards[-1], i_episode)
             writer.add_scalar('Loss/value', value_loss, i_episode)
             writer.add_scalar('Loss/policy', policy_loss, i_episode)
     
-    agent.save_model(env_name='Pendulum-v1', suffix="DDPG")
+    print(f"Total steps: {total_numsteps}")
+    env_name = 'HalfCheetah-v3'
+    agent.save_model(env_name, suffix="DDPG")      
  
 def test():
     num_episodes = 10
     render = True
-    env = gym.make('Pendulum-v1')
+    env = gym.make('HalfCheetah-v3')
     agent = DDPG(env.observation_space.shape[0], env.action_space)
-    agent.load_model(actor_path='./preTrained/ddpg_actor_Pendulum-v1_05022023_155126_.pth',
-                        critic_path='./preTrained/ddpg_critic_Pendulum-v1_05022023_155126_.pth')
-    for i_episode in range(num_episodes):
+    agent.load_model(actor_path='./preTrained/ddpg_actor_HalfCheetah-v3_05092024_014726_DDPG',
+                        critic_path='./preTrained/ddpg_critic_HalfCheetah-v3_05092024_014726_DDPG')
+    for i_episode in range(1, num_episodes+1):
         state = torch.Tensor([env.reset()])
         episode_reward = 0
         while True:
@@ -402,11 +377,11 @@ def test():
                 break
         print("Episode: {}, reward: {:.2f}".format(i_episode, episode_reward))
 
+
 if __name__ == '__main__':
     # For reproducibility, fix the random seed
-    random_seed = 10  
-    env = gym.make('Pendulum-v1')
-    env.seed(random_seed)  
-    torch.manual_seed(random_seed)  
+    random_seed = 4543
+    env = gym.make('HalfCheetah-v3')
+    env.seed(random_seed)
     train()
-    test()
+    #test()
