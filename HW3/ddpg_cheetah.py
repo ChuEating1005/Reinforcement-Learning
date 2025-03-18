@@ -360,8 +360,8 @@ def test():
     render = True
     env = gym.make('HalfCheetah-v3')
     agent = DDPG(env.observation_space.shape[0], env.action_space)
-    agent.load_model(actor_path='./preTrained/ddpg_actor_HalfCheetah-v3_05092024_014726_DDPG',
-                        critic_path='./preTrained/ddpg_critic_HalfCheetah-v3_05092024_014726_DDPG')
+    agent.load_model(actor_path='./preTrained/ddpg_actor_HalfCheetah-v2_05072024_071901_DDPG',
+                        critic_path='./preTrained/ddpg_critic_HalfCheetah-v2_05072024_071901_DDPG')
     for i_episode in range(1, num_episodes+1):
         state = torch.Tensor([env.reset()])
         episode_reward = 0
@@ -383,5 +383,5 @@ if __name__ == '__main__':
     random_seed = 4543
     env = gym.make('HalfCheetah-v3')
     env.seed(random_seed)
-    train()
-    #test()
+    #train()
+    test()
